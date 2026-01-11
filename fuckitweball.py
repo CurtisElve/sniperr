@@ -2,28 +2,33 @@ import asyncio
 import aiohttp
 import json
 import math
+from os import getenv
+from dotenv import load_dotenv
 import requests
 from datetime import datetime, timezone
 from gql import Client, gql
 from gql.transport.websockets import WebsocketsTransport
 
+# Must have env variables BITQUERY_API_KEY and PUMPPORTAL_API_KEY
+load_dotenv()
+
 headers = {
     'Content-Type': 'application/json',
-    'Authorization': 'Bearer ory_at_DY590MZfukhtgf6_ryUQW1NdovC9Pbl79GoxZCIjMJY.tI-wUv9C0b9RzKv3KVKcXHMwMNz4IQt4X-lUDFxYP44'
+    'Authorization': 'Bearer ' + getenv("BITQUERY_API_KEY")
 }
 tasks = {}
 url = "https://streaming.bitquery.io/eap"
-pump_url = "https://pumpportal.fun/api/trade?api-key=b14qmjj3e5bn6xancn4pgpkaath38k3q9ngn0ebrcxpq4tv9chw2pua69n234bv6e1w48pjmf9rn8dbaf5m5ggkcehbpyutgd14k8dkq8xt5auucah64pxkj699pavvu95unawvtewykuagvm4w9r9d4n6y3db11kgju5cgch7jpva175n54ujqctwq0hjmedw3gta48h8kuf8"
+pump_url = "https://pumpportal.fun/api/trade?api-key=" + getenv("PUMPPORTAL_API_KEY")
 devToken = {}
 currentTask = None
 subscriptionmanagerrrr = None
 devQuery = ""
 socketa = WebsocketsTransport(
-    url="wss://streaming.bitquery.io/eap?token=ory_at_DY590MZfukhtgf6_ryUQW1NdovC9Pbl79GoxZCIjMJY.tI-wUv9C0b9RzKv3KVKcXHMwMNz4IQt4X-lUDFxYP44",
+    url="wss://streaming.bitquery.io/eap?token=" + getenv("BITQUERY_API_KEY"),
     headers={"Sec-WebSocket-Protocol": "graphql-ws"},
 )
 socketb = socketa = WebsocketsTransport(
-    url="wss://streaming.bitquery.io/eap?token=ory_at_DY590MZfukhtgf6_ryUQW1NdovC9Pbl79GoxZCIjMJY.tI-wUv9C0b9RzKv3KVKcXHMwMNz4IQt4X-lUDFxYP44",
+    url="wss://streaming.bitquery.io/eap?token=" + getenv("BITQUERY_API_KEY"),
     headers={"Sec-WebSocket-Protocol": "graphql-ws"},
 )
 holding = {}
@@ -66,7 +71,12 @@ async def spawnCamp():
                     Solana {{
                         TokenSupplyUpdates(
                             where: {{
-                                Instruction: {{ Program: {{ Method: {{ is: "create" }} }} }},
+                                Instruction: {{ Program: 
+                                    {{ 
+                                    Address: {{ is: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P" }},
+                                    Method: {{in: ["create","create_v2"]}}
+                                    }} 
+                                }},
                                 TokenSupplyUpdate: {{ Currency: {{ MintAddress: {{ endsWith: "pump" }} }} }},
                                 Block: {{ Time: {{ after: "{lastcall["time"]}" }} }}
                             }},
@@ -89,6 +99,7 @@ async def spawnCamp():
             if data:
                 lastcall = {"time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
                 for token in data:
+                    print(token["TokenSupplyUpdate"]["Currency"]["MintAddress"])
                     realshit = await isDevABaller(token["TokenSupplyUpdate"]["Currency"]["MintAddress"])
                     if realshit and token["TokenSupplyUpdate"]["Currency"]["MintAddress"] not in [v[0] for v in devToken.values()]:
                         if len(devToken) > 5:
@@ -112,19 +123,20 @@ async def isDevABaller(token):
                 orderBy: {{ascending: Block_Time}}
                 ) {{
                 Trade {{
-                        Buy {{
-                            Amount
-                            Account {{
-                                Owner
-                            }}
-                            PriceInUSD
-                            Price
-                        }}
+                    Buy {{
+                    Amount
+                    Account {{
+                        Owner
+                    }}
+                    PriceInUSD
+                    Price
                     }}
                 }}
+                }}
             }}
-        }}''',
-        "variables": "{}"
+            }}
+            ''',
+    "variables": "{}"
     })
 
     async with aiohttp.ClientSession() as session:
@@ -134,11 +146,11 @@ async def isDevABaller(token):
     if data:
         trade = data[0]['Trade']['Buy']
         amount = float(trade['Amount'])
-        price = trade['Price']
+        price = trade['PriceInUSD']
     else:
         return False
 
-    if price > .00000444 and amount*price > 100:
+    if amount*price > 333:
         print("big baller found: " + token)
         return [trade['Price'], amount * price]
     else:
