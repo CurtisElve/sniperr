@@ -19,23 +19,23 @@ headers = {
 tasks = {}
 url = "https://streaming.bitquery.io/eap"
 pump_url = "https://pumpportal.fun/api/trade?api-key=" + getenv("PUMPPORTAL_API_KEY")
-devToken = {}
+monitored_tokens = {}
 currentTask = None
-subscriptionmanagerrrr = None
+sub_manager_task = None
 devQuery = ""
-socketa = WebsocketsTransport(
+primary_socket = WebsocketsTransport(
     url="wss://streaming.bitquery.io/eap?token=" + getenv("BITQUERY_API_KEY"),
     headers={"Sec-WebSocket-Protocol": "graphql-ws"},
 )
-socketb = socketa = WebsocketsTransport(
+secondary_socket = WebsocketsTransport(
     url="wss://streaming.bitquery.io/eap?token=" + getenv("BITQUERY_API_KEY"),
     headers={"Sec-WebSocket-Protocol": "graphql-ws"},
 )
 holding = {}
-last3 = {}
+price_history_brief = {}
 snipe = ""
-moneyyy = 0.05
-lastcall = {"time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+sol_balance = 0.04
+last_sync_time = {"time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 last_activity = datetime.now(timezone.utc)
 
 def is_timestamp_good(timestamp_str):
@@ -44,7 +44,7 @@ def is_timestamp_good(timestamp_str):
 
 def pop_oldest(d):
     if not d:
-        raise KeyError("Dict is empty, fam")
+        raise KeyError("Dictionary is empty.")
     oldest_key = next(iter(d))  # Get first key
     return d.pop(oldest_key)    # Pop and return value
 
@@ -57,15 +57,15 @@ async def safe_request(url, data, retries=3):
         except requests.exceptions.RequestException as e:
             print(f"Trade failed, retrying ({attempt+1}/{retries}): {e}")
             await asyncio.sleep(2 ** attempt)
-    print("Trade API down, skipping...")
+    print("Trade API unavailable, skipping...")
     return None
 
-async def spawnCamp():
-    global devToken
+async def monitor_new_mints():
+    global monitored_tokens
     while True:
         if len(holding) == 0:
-            print("Spawning camp")
-            global lastcall
+            print("Scanning for new mints...")
+            global last_sync_time
             payload = json.dumps({
                 "query": f"""{{
                     Solana {{
@@ -78,7 +78,7 @@ async def spawnCamp():
                                     }} 
                                 }},
                                 TokenSupplyUpdate: {{ Currency: {{ MintAddress: {{ endsWith: "pump" }} }} }},
-                                Block: {{ Time: {{ after: "{lastcall["time"]}" }} }}
+                                Block: {{ Time: {{ after: "{last_sync_time["time"]}" }} }}
                             }},
                             limit: {{ count: 100 }},
                             orderBy: {{ ascending: Block_Time }}
@@ -97,23 +97,23 @@ async def spawnCamp():
                     data = data.get('data', {}).get('Solana', {}).get('TokenSupplyUpdates', [])
 
             if data:
-                lastcall = {"time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                last_sync_time = {"time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
                 for token in data:
-                    print(token["TokenSupplyUpdate"]["Currency"]["MintAddress"])
-                    realshit = await isDevABaller(token["TokenSupplyUpdate"]["Currency"]["MintAddress"])
-                    if realshit and token["TokenSupplyUpdate"]["Currency"]["MintAddress"] not in [v[0] for v in devToken.values()]:
-                        if len(devToken) > 5:
-                            print("popped")
-                            pop_oldest(devToken)
-                        devToken[token["Transaction"]["Signer"]] = [
+                    print(f"New token detected: {token['TokenSupplyUpdate']['Currency']['MintAddress']}")
+                    market_data = await check_dev_liquidity(token["TokenSupplyUpdate"]["Currency"]["MintAddress"])
+                    if market_data and token["TokenSupplyUpdate"]["Currency"]["MintAddress"] not in [v[0] for v in monitored_tokens.values()]:
+                        if len(monitored_tokens) > 5:
+                            print("Rotating monitor queue (limit reached).")
+                            pop_oldest(monitored_tokens)
+                        monitored_tokens[token["Transaction"]["Signer"]] = [
                             token["TokenSupplyUpdate"]["Currency"]["MintAddress"],
                             token["Block"]["Time"],
-                            realshit[0],
-                            realshit[1],
+                            market_data[0],
+                            market_data[1],
                         ]
         await asyncio.sleep(22)
 
-async def isDevABaller(token):
+async def check_dev_liquidity(token):
     payload = json.dumps({
         "query": f'''query MyQuery {{
             Solana {{
@@ -151,7 +151,7 @@ async def isDevABaller(token):
         return False
 
     if amount*price > 333:
-        print("big baller found: " + token)
+        print(f"Significant liquidity found: {token}")
         return [trade['Price'], amount * price]
     else:
         return False
@@ -167,40 +167,40 @@ async def sell(mint):
         "pool": "pump"
     })
     if response:
-        print(response)
+        print(f"Sell executed: {response}")
     else:
-        print("Sell failed")
+        print("Sell operation failed")
 
 async def restart_task(taskname):
-    global socket, tasks
+    global tasks
     tasks[taskname].cancel()
     try:
         await tasks[taskname]
-        print(f"Task {taskname} cancelled")
+        print(f"Task {taskname} terminated")
     except Exception as e:
-        print(f"{e}")
+        print(f"Shutdown log: {e}")
 
     if taskname == "subscriptionManager":
         tasks["subscriptionManager"] = asyncio.create_task(subscriptionManager(), name="subscriptionManager")
-    elif taskname == "smgNoSnipes":
-        tasks["smgNoSnipes"] = asyncio.create_task(smgNoSnipes(), name="smgNoSnipes")
-    elif taskname == "spawnCamp":
-        tasks["spawnCamp"] = asyncio.create_task(spawnCamp(), name="spawnCamp")
+    elif taskname == "monitor_untracked_tokens":
+        tasks["monitor_untracked_tokens"] = asyncio.create_task(monitor_untracked_tokens(), name="monitor_untracked_tokens")
+    elif taskname == "monitor_new_mints":
+        tasks["monitor_new_mints"] = asyncio.create_task(monitor_new_mints(), name="monitor_new_mints")
 
 async def heartbeat_check(batch):
-    global last_activity, moneyyy, holding
+    global last_activity, sol_balance, holding
     while True:
         await asyncio.sleep(22)
         now = datetime.now(timezone.utc)
-        if (now - last_activity).total_seconds() > 22 and batch:  # Only nuke if batch isn’t empty
-            print("No buys for 22s - nuking batch")
+        if (now - last_activity).total_seconds() > 22 and batch:
+            print("Inactivity detected (22s) - liquidating batch")
             for dev in list(batch.keys()):
                 try:
                     await sell(batch[dev]["mint"])
-                    moneyyy += batch[dev]["bought"]  # 1x since no price updates
-                    print(f"Cash: {moneyyy:.6f} SOL")
+                    sol_balance += batch[dev]["bought"]
+                    print(f"Balance: {sol_balance:.6f} SOL")
                 except Exception as e:
-                    print(f"Sell failed for {dev}: {e}")
+                    print(f"Liquidation failed for {dev}: {e}")
                 finally:
                     holding.pop(dev, None)
                     batch.pop(dev)
@@ -211,38 +211,33 @@ async def heartbeat_check(batch):
 async def timerKillSwitch(batch):
     await asyncio.sleep(22)
     for dev, _ in batch:
-        devToken.pop(dev, None)
-    await restart_task("smgNoSnipes")
+        monitored_tokens.pop(dev, None)
+    await restart_task("monitor_untracked_tokens")
 
 trade_timestamps = {}
 peak_tpm = {}
-async def ate(query, batch):
-    global holding, moneyyy, last_activity, trade_timestamps, last3, peak_tpm
+async def track_live_trades(query, batch):
+    global holding, sol_balance, last_activity, trade_timestamps, price_history_brief, peak_tpm
     window_seconds = 15
-    print(f"Ate started - Batch: {len(batch)} coins, SOL: {moneyyy:.6f}")
+    print(f"Trade tracking active - Batch size: {len(batch)}, Current SOL: {sol_balance:.6f}")
     try:
-        # Concurrent subscription loop—optimized inside
-        async for result in socketa.subscribe(query):
+        async for result in primary_socket.subscribe(query):
             last_activity = datetime.now(timezone.utc)
-            print("Subscription tick")
             if not result.data:
-                print("No data in result, skipping")
                 continue
             for dev, trades in result.data.items():
                 if dev[1:] not in batch:
-                    print(f"Dev {dev[1:]} not in batch, skipping")
                     continue
                 dex_trades = trades.get("DEXTrades", [])
                 if not dex_trades:
-                    print(f"No DEX trades for {dev[1:]}, skipping")
                     continue
                 trade = dex_trades[0]
                 current_price = trade["Trade"]["Buy"]["Price"]
-                if last3.get(dev[1:]) is None:
-                    last3[dev[1:]] = []
-                last3[dev[1:]].append(current_price)
-                if len(last3[dev[1:]]) > 3:
-                    last3[dev[1:]].pop(0)
+                if price_history_brief.get(dev[1:]) is None:
+                    price_history_brief[dev[1:]] = []
+                price_history_brief[dev[1:]].append(current_price)
+                if len(price_history_brief[dev[1:]]) > 3:
+                    price_history_brief[dev[1:]].pop(0)
                 amount = float(trade["Trade"]["Buy"]["Amount"])
                 block_time = trade["Block"]["Time"]
 
@@ -264,14 +259,15 @@ async def ate(query, batch):
                 elapsed = (now - datetime.strptime(trade_timestamps[dev[1:]]["start"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds()
                 if elapsed > 22:
                     stoploss = 0.90
+                
                 if "bought" not in batch[dev[1:]]:
-                    if trades_per_min > 7 and current_price < pricecap and current_price > batch[dev[1:]]["firstprice"] * 0.8 and (last3[dev[1:]][-1] > last3[dev[1:]][-2] or last3[dev[1:]][-2] > last3[dev[1:]][-3]):
+                    if trades_per_min > 7 and current_price < pricecap and current_price > batch[dev[1:]]["firstprice"] * 0.8 and (price_history_brief[dev[1:]][-1] > price_history_brief[dev[1:]][-2] or price_history_brief[dev[1:]][-2] > price_history_brief[dev[1:]][-3]):
                         entry_price = current_price
-                        bought = ((-666 / (batch[dev[1:]]["firstbuy"] + 666) + 1) * moneyyy) / len(batch)
+                        bought = ((-666 / (batch[dev[1:]]["firstbuy"] + 666) + 1) * sol_balance) / len(batch)
                         batch[dev[1:]]["bought"] = bought
                         batch[dev[1:]]["entry_price"] = entry_price
-                        if moneyyy < bought:
-                            print(f"Not enough SOL ({moneyyy:.6f} < {bought:.6f})")
+                        if sol_balance < bought:
+                            print(f"Insufficient funds ({sol_balance:.6f} < {bought:.6f})")
                             batch.pop(dev[1:])
                             holding.pop(dev[1:], None)
                             continue
@@ -285,83 +281,73 @@ async def ate(query, batch):
                             "pool": "pump"
                         })
                         if not response:
-                            print("Buy failed")
+                            print("Entry buy failed")
                             batch.pop(dev[1:])
                             holding.pop(dev[1:], None)
                             continue
-                        moneyyy -= bought
-                        print(f"Bought {batch[dev[1:]]['mint']} at {entry_price:.10f} SOL - Cash: {moneyyy:.6f} SOL")
-                        print(response)
+                        sol_balance -= bought
+                        print(f"Bought {batch[dev[1:]]['mint']} at {entry_price:.10f} SOL - Balance: {sol_balance:.6f} SOL")
                     else:
-                        print(f"Waiting - TPM: {trades_per_min:.2f} (< 7), Price: {current_price:.10f}, Elapsed: {elapsed:.1f}s")
                         if elapsed > 22:
-                            print(f"Timeout - TPM {trades_per_min:.2f} never hit 7, no buy")
+                            print(f"Entry timeout - TPM {trades_per_min:.2f} insufficient")
                             batch.pop(dev[1:])
                             holding.pop(dev[1:], None)
                 else:
                     entry_price = batch[dev[1:]]["entry_price"]
                     price_ratio = current_price / entry_price
-                    print(f"Stats - TPM: {trades_per_min:.2f}, Ratio: {price_ratio:.2f}, Price: {current_price:.10f}, Elapsed: {elapsed:.1f}s")
+                    print(f"Stats - TPM: {trades_per_min:.2f}, ROI: {price_ratio:.2f}x, Price: {current_price:.10f}")
                     peak_tpm[dev[1:]] = max(peak_tpm.get(dev[1:], trades_per_min), trades_per_min)
+                    
                     if (trades_per_min < elapsed and elapsed > 20) or trades_per_min < 0.84 * peak_tpm[dev[1:]]:
-                        print(f"sloweddown - Sold at {current_price:.10f} ({price_ratio:.2f}x) after {elapsed:.1f}s")
+                        print(f"Momentum slowing - Exit at {current_price:.10f} ({price_ratio:.2f}x)")
                         await sell(batch[dev[1:]]["mint"])
-                        moneyyy += batch[dev[1:]]["bought"] * price_ratio
-                        print(f"Cash: {moneyyy:.6f} SOL")
+                        sol_balance += batch[dev[1:]]["bought"] * price_ratio
                         batch.pop(dev[1:])
                         holding.pop(dev[1:], None)
                     elif current_price > pricecap:
-                        print(f"stock peaking - Sold at {current_price:.10f} ({price_ratio:.2f}x) after {elapsed:.1f}s")
+                        print(f"Price ceiling hit - Exit at {current_price:.10f} ({price_ratio:.2f}x)")
                         await sell(batch[dev[1:]]["mint"])
-                        moneyyy += batch[dev[1:]]["bought"] * price_ratio
-                        print(f"Cash: {moneyyy:.6f} SOL")
+                        sol_balance += batch[dev[1:]]["bought"] * price_ratio
                         batch.pop(dev[1:])
                         holding.pop(dev[1:], None)
                     elif price_ratio <= 1.1 and elapsed > 20:
-                        print(f"Timeout - Sold at {current_price:.10f} ({price_ratio:.2f}x) after {elapsed:.1f}s")
+                        print(f"Trade duration limit reached - Exit at {current_price:.10f}")
                         await sell(batch[dev[1:]]["mint"])
-                        moneyyy += batch[dev[1:]]["bought"] * price_ratio
-                        print(f"Cash: {moneyyy:.6f} SOL")
+                        sol_balance += batch[dev[1:]]["bought"] * price_ratio
                         batch.pop(dev[1:])
                         holding.pop(dev[1:], None)
                     elif price_ratio <= stoploss:
-                        print(f"Stop Loss - Sold at {current_price:.10f} ({price_ratio:.2f}x), SL: {stoploss:.2f}")
+                        print(f"Stop Loss triggered - Exit at {current_price:.10f}")
                         await sell(batch[dev[1:]]["mint"])
-                        moneyyy += batch[dev[1:]]["bought"] * price_ratio
-                        print(f"Cash: {moneyyy:.6f} SOL")
+                        sol_balance += batch[dev[1:]]["bought"] * price_ratio
                         batch.pop(dev[1:])
                         holding.pop(dev[1:], None)
                     elif price_ratio >= take_profit:
-                        print(f"Take Profit - Sold at {current_price:.10f} ({price_ratio:.2f}x), TP: {take_profit:.2f}")
+                        print(f"Take Profit triggered - Exit at {current_price:.10f}")
                         await sell(batch[dev[1:]]["mint"])
-                        moneyyy += batch[dev[1:]]["bought"] * price_ratio
-                        print(f"Cash: {moneyyy:.6f} SOL")
+                        sol_balance += batch[dev[1:]]["bought"] * price_ratio
                         batch.pop(dev[1:])
                         holding.pop(dev[1:], None)
-                    else:
-                        print(f"Holding - Bought at {entry_price:.10f}, Now {current_price:.10f} ({price_ratio:.2f}x), SL: {stoploss:.2f}, TP: {take_profit:.2f}")
 
-            # Check if batch is empty inside the loop
             if not batch:
-                print("Batch empty - all processed")
-                break  # Exit subscription loop, let outer block finish
+                print("Batch processing complete.")
+                break 
     except Exception as e:
-        print(f"Subscription crashed: {e} - proceeding to cleanup")
+        print(f"Stream error: {e}")
 
-    # After subscription ends (break, error, or natural end), finalize
     if batch:
-        print(f"Subscription ended with {len(batch)} keys left")
+        print(f"Subscription finished with {len(batch)} remaining items.")
 
 async def subscriptionTask(query):
     global holding
     if len(holding) == 0:
         try:
-            print("fishing out here yo")
-            async for result in socketb.subscribe(query):
+            print("Monitoring for target token activity...")
+            async for result in secondary_socket.subscribe(query):
                 if not result.data:
                     continue
                 for dev, trades in result.data.items():
-                    if dev[1:] in devToken:
+                    if dev[1:] in monitored_tokens:
                         dex_trades = trades.get("DEXTrades", [])
                         if dex_trades:
                             first_trade = dex_trades[0]
@@ -370,23 +356,23 @@ async def subscriptionTask(query):
                                     "mint": first_trade["Trade"]["Buy"]["Currency"]["MintAddress"],
                                     "amount": first_trade["Trade"]["Buy"]["Amount"],
                                     "price": first_trade["Trade"]["Buy"]["Price"],
-                                    "firstbuy": devToken[dev[1:]][3],
-                                    "firstprice": devToken[dev[1:]][2],
+                                    "firstbuy": monitored_tokens[dev[1:]][3],
+                                    "firstprice": monitored_tokens[dev[1:]][2],
                                 }
                                 holding[dev[1:]] = coin
-                                print("SNIPE!!" + coin["mint"] + " -- " + str(coin["price"]) + " -- firstprice=" + str(coin["firstprice"]) + " -- firstbuy=" + str(coin["firstbuy"]))
-                            devToken.pop(dev[1:], None)
+                                print(f"TARGET ACQUIRED: {coin['mint']} | Initial Price: {coin['firstprice']}")
+                            monitored_tokens.pop(dev[1:], None)
         except Exception as e:
-            print(f"SubscriptionTask crashed: {e}")
+            print(f"Subscription task error: {e}")
     else:
         await asyncio.sleep(11)
 
-async def smgNoSnipes():
+async def monitor_untracked_tokens():
     global devQuery, currentTask, holding
     while True:
-        if len(devToken) != 0 and len(holding) == 0:
+        if len(monitored_tokens) != 0 and len(holding) == 0:
             devQuery = ""
-            x = devToken.copy().items()
+            x = monitored_tokens.copy().items()
             for dev, token in x:
                 if is_timestamp_good(token[1]):
                     devQuery += f'''
@@ -417,7 +403,7 @@ async def smgNoSnipes():
                         }}\n
                     '''
                 else:
-                    devToken.pop(dev, None)
+                    monitored_tokens.pop(dev, None)
             if len(devQuery) != 0:
                 query = gql(f"""
                     subscription {{
@@ -425,12 +411,12 @@ async def smgNoSnipes():
                     }}
                 """)
                 await asyncio.wait_for(subscriptionTask(query), timeout=22)
-                print("done!!!!!")
+                print("Monitoring cycle finished.")
         else:
             await asyncio.sleep(11)
 
 async def subscriptionManager():
-    global trade_timestamps, moneyyy, holding, last3
+    global trade_timestamps, sol_balance, holding, price_history_brief
     while True:
         if len(holding) != 0:
             snipe = ""
@@ -462,58 +448,57 @@ async def subscriptionManager():
                     }}\n
                 '''
             if len(snipe) != 0:
-                letsGetThisBRead = gql(f"""
+                active_query = gql(f"""
                     subscription {{
                         {snipe}
                     }}
                 """)
-                keepgoingyurr = True
-                crashes = 0
+                is_processing = True
                 trade_timestamps = {}
-                last3 = {}
+                price_history_brief = {}
                 initialtime = datetime.now()
-                while keepgoingyurr:
-                    await asyncio.wait_for(ate(letsGetThisBRead, batch), timeout=66)
-                    crashes += 1
-                    keepgoingyurr = False
+                while is_processing:
+                    await asyncio.wait_for(track_live_trades(active_query, batch), timeout=66)
+                    is_processing = False
                     for key in batch.keys():
                         if key in holding:
-                            keepgoingyurr = True
+                            is_processing = True
                         else:
                             batch.pop(key)
                     if (datetime.now() - initialtime).total_seconds() > 22:
-                        print("crashing out bad coin in the batch")
+                        print("Performance threshold met; resetting batch for safety.")
                         for dev in list(batch.keys()):
                             try:
                                 await sell(batch[dev]["mint"])
-                                moneyyy += batch[dev]["bought"]
+                                sol_balance += batch[dev]["bought"]
                             except Exception as e:
-                                print(f"Sell failed for {dev}: {e}")
+                                print(f"Reset liquidation failed: {e}")
                             holding.pop(dev, None)
-                            keepgoingyurr = False
+                            is_processing = False
         else:
             await asyncio.sleep(1)
 
 def rugcheck(token):
-    check = requests.get(f"https://api.rugcheck.xyz/v1/tokens/{token}/report/summary")
-    print(check.json())
-    if check.json()["score_normalised"] == 1:
-        return True
-    else:
-        print("fuck these devs hope they perish")
+    try:
+        check = requests.get(f"https://api.rugcheck.xyz/v1/tokens/{token}/report/summary")
+        if check.json().get("score_normalised") == 1:
+            return True
+        else:
+            print(f"Rug check failed: Token flagged as high risk.")
+            return False
+    except:
         return False
 
-
 async def main():
-    global socketa, socketb
-        # Only connect if not already connected
-    if socketa.websocket is None or socketa.websocket.closed:
-        await socketa.connect()
-    if socketb.websocket is None or socketb.websocket.closed:
-        await socketb.connect()
+    global primary_socket, secondary_socket
+    if primary_socket.websocket is None or primary_socket.websocket.closed:
+        await primary_socket.connect()
+    if secondary_socket.websocket is None or secondary_socket.websocket.closed:
+        await secondary_socket.connect()
+    
     tasks["subscriptionManager"] = asyncio.create_task(subscriptionManager(), name="subscriptionManager")
-    tasks["spawnCamp"] = asyncio.create_task(spawnCamp(), name="spawnCamp")
-    tasks["smgNoSnipes"] = asyncio.create_task(smgNoSnipes(), name="smgNoSnipes")
+    tasks["monitor_new_mints"] = asyncio.create_task(monitor_new_mints(), name="monitor_new_mints")
+    tasks["monitor_untracked_tokens"] = asyncio.create_task(monitor_untracked_tokens(), name="monitor_untracked_tokens")
     await asyncio.Future()
 
 asyncio.run(main())
