@@ -4,6 +4,16 @@ A Python-based trading bot designed to monitor the Solana blockchain for new tok
 
 > **Disclaimer:** This is an educational project built to explore asynchronous programming and blockchain streaming. It does not guarantee profit.
 
+---
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/0306873d-7dfb-46ca-a766-54d1e805360a" width="100%" controls>
+    Your browser does not support the video tag.
+  </video>
+</div>
+
+---
+
 ## Purpose
 
 The bot automates the process of finding and "sniping" new tokens launched via the Pump.fun bonding curve. It aims to identify tokens with high initial developer investment and exit positions based on trade volume and price action.
